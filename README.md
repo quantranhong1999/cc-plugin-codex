@@ -5,11 +5,11 @@
 <h3 align="center">Claude Code Plugin for Codex</h3>
 
 <p align="center">
-  Run Claude Code reviews, rescue tasks, and tracked background work from inside Codex.
+  Run Claude Code reviews and rescue tasks, or transfer a conversation from Codex.
 </p>
 
 <p align="center">
-  <code>cc-plugin-codex</code> runs inside Codex and lets you use Claude Code and Claude models for review, rescue, and tracked background workflows.
+  <code>cc-plugin-codex</code> runs inside Codex for Claude Code reviews, rescue tasks, and conversation handoff.
 </p>
 
 <p align="center">
@@ -26,9 +26,9 @@
 ## What Is This?
 
 `cc-plugin-codex` turns Codex into a host for Claude Code work.
-**Codex stays in charge of the thread. Claude Code does the review and rescue work.**
+**Codex can delegate review and rescue work to Claude Code, or hand over a conversation for you to continue there.**
 
-You get seven commands (`$cc:review`, `$cc:adversarial-review`, `$cc:rescue`, `$cc:status`, `$cc:result`, `$cc:cancel`, `$cc:setup`) that launch tracked Claude Code work, manage lifecycle and ownership, and surface results back into Codex.
+You get eight commands (`$cc:review`, `$cc:adversarial-review`, `$cc:rescue`, `$cc:transfer`, `$cc:status`, `$cc:result`, `$cc:cancel`, `$cc:setup`) that launch tracked Claude Code work, manage lifecycle and ownership, and surface results back into Codex.
 
 That includes:
 - Built-in Codex subagent orchestration for rescue and background review flows
@@ -102,6 +102,7 @@ When it finishes, Codex should nudge you toward the right result. If not, `$cc:s
 | `$cc:review` | Read-only Claude Code review of your changes |
 | `$cc:adversarial-review` | Design-challenging review — questions approach, tradeoffs, hidden assumptions |
 | `$cc:rescue` | Hand a task to Claude Code — bugs, fixes, investigations, follow-ups |
+| `$cc:transfer` | Move this Codex task's text conversation to a new Claude Code session |
 | `$cc:status` | List running and recent Claude Code jobs, or inspect one job |
 | `$cc:result` | Open the output of a finished job |
 | `$cc:cancel` | Cancel an active background job |
@@ -181,6 +182,17 @@ $cc:rescue --model sonnet --effort medium investigate the flaky test
 **Resume behavior:** If you don't pass `--resume` or `--fresh`, rescue checks for a resumable Claude session and asks once whether to continue or start fresh. Your phrasing guides the recommendation — "continue the last run" → resume, "start over" → fresh.
 
 Background rescue runs through a built-in Codex subagent. When the child finishes, the plugin tries to nudge the parent thread with the exact `$cc:result <job-id>` to open.
+
+### `$cc:transfer`
+
+Start a new, resumable Claude Code session with the current Codex task's visible text conversation as context:
+
+```text
+$cc:transfer
+$cc:transfer --model sonnet
+```
+
+The command prints the Claude session ID and a `claude --resume <session-id>` command. Claude acknowledges the handoff and waits for your next instruction. The transfer is tracked, so `$cc:status` and `$cc:result` can find it later. This is a text handoff: images, audio, tool calls, hidden instructions, and reasoning are not imported. The current `$cc:transfer` request is omitted from the imported conversation. Conversations over 1,000,000 text characters fail explicitly instead of being truncated. The default model is `opus`; effort follows Claude Code's own default unless you pass `--effort`.
 
 ### `$cc:status`
 

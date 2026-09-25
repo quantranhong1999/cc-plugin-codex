@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claude Code Transfer"
+  short_description: "Move this Codex conversation into a resumable Claude session."
+  default_prompt: "Use $cc:transfer to continue this Codex conversation in Claude Code."

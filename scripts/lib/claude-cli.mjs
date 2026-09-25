@@ -731,6 +731,9 @@ export function buildArgs(prompt, options = {}) {
       args.push("--allowedTools", tool);
     }
   }
+  if (options.tools) {
+    args.push("--tools", options.tools.join(","));
+  }
   if (options.maxTurns) {
     args.push("--max-turns", String(options.maxTurns));
   }

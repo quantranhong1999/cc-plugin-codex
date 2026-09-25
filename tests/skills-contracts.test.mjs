@@ -16,6 +16,15 @@ function read(relativePath) {
   return fs.readFileSync(path.join(PROJECT_ROOT, relativePath), "utf8");
 }
 
+test("transfer skill routes through the active companion and describes the text-only handoff", () => {
+  const skill = read("skills/transfer/SKILL.md");
+  const manifest = JSON.parse(read(".codex-plugin/plugin.json"));
+  assert.match(skill, /two directories above this `SKILL\.md` file/);
+  assert.match(skill, /<plugin-root>\/scripts\/claude-companion\.mjs" transfer/);
+  assert.match(skill, /Images, audio, tool traffic, hidden instructions, and reasoning are not transferred/);
+  assert.ok(manifest.interface.defaultPrompt.some((prompt) => prompt.includes("$cc:transfer")));
+});
+
 test("public model contracts document native Fable support and host-owned effort defaults", () => {
   const contracts = [
     "README.md",

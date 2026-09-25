@@ -1,7 +1,7 @@
 {
   "name": "cc",
   "version": "1.5.0",
-  "description": "Claude Code Plugin for Codex. Delegate code reviews, investigations, and tracked tasks to Claude Code from inside Codex.",
+  "description": "Claude Code Plugin for Codex. Delegate reviews and tasks or transfer a conversation to Claude Code.",
   "author": {
     "name": "Sendbird, Inc.",
     "email": "jin.ku@sendbird.com",
@@ -22,7 +22,7 @@
   "interface": {
     "displayName": "Claude Code",
     "shortDescription": "Claude Code Plugin for Codex",
-    "longDescription": "Use Claude Code from inside Codex to run read-only reviews, adversarial design reviews, and tracked rescue tasks through a Claude-backed runtime with job status and result retrieval.",
+    "longDescription": "Use Claude Code from inside Codex to run reviews and tracked rescue tasks, or transfer the current text conversation into a resumable Claude Code session.",
     "developerName": "Sendbird, Inc.",
     "category": "Coding",
     "capabilities": [
@@ -35,7 +35,8 @@
     "defaultPrompt": [
       "Use Claude Code to review my current changes through $cc:review",
       "Use Claude Code to challenge this implementation through $cc:adversarial-review",
-      "Use Claude Code to investigate and fix this issue through $cc:rescue"
+      "Use Claude Code to investigate and fix this issue through $cc:rescue",
+      "Transfer this Codex conversation to Claude Code through $cc:transfer"
     ],
     "brandColor": "#7B39FE",
     "composerIcon": "./assets/cc-small.svg",

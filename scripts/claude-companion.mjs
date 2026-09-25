@@ -18,7 +18,7 @@
  * - Review gate matches upstream setup semantics: Stop hook runs when enabled
  *
  * Subcommands:
- *   setup, review, adversarial-review, task, task-worker,
+ *   setup, review, adversarial-review, task, transfer, task-worker,
  *   status, result, cancel, task-resume-candidate
  */
 
@@ -111,6 +111,7 @@ import {
   SESSION_ID_ENV
 } from "./lib/tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
+import { buildTransferPrompt, readCodexTranscript } from "./lib/codex-transcript.mjs";
 import {
   renderReviewResult,
   renderStoredJobResult,
@@ -140,6 +141,7 @@ function printUsage() {
       "  node scripts/claude-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model>] [--effort <low|medium|high|xhigh|max>]",
       "  node scripts/claude-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model>] [--effort <low|medium|high|xhigh|max>] [focus text]",
       "  node scripts/claude-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model>] [--effort <low|medium|high|xhigh|max>] [prompt]",
+      "  node scripts/claude-companion.mjs transfer [--thread-id <Codex-task-id>] [--cwd <path>] [--model <model>] [--effort <low|medium|high|xhigh|max>] [--json]",
       "  node scripts/claude-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/claude-companion.mjs result [job-id] [--json]",
       "  node scripts/claude-companion.mjs cancel [job-id] [--json]",
@@ -1088,6 +1090,9 @@ function buildReviewJobMetadata(reviewName, target) {
 }
 
 function getJobKindLabel(kind, jobClass) {
+  if (kind === "transfer") {
+    return "transfer";
+  }
   if (kind === "adversarial-review") {
     return "adversarial-review";
   }
@@ -1741,6 +1746,87 @@ async function handleTask(argv) {
   });
 }
 
+async function handleTransfer(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    valueOptions: ["thread-id", "cwd", "model", "effort"],
+    booleanOptions: ["json"],
+    aliasMap: { m: "model" }
+  });
+  if (positionals.length > 0) {
+    throw new Error("transfer accepts only flags; continue the conversation in Claude after the handoff.");
+  }
+
+  const cwd = resolveCommandCwd(options);
+  const workspaceRoot = resolveCommandWorkspace(options);
+  const threadId = resolveOwnerSessionId(
+    options["thread-id"] ??
+      process.env.CODEX_THREAD_ID ??
+      process.env[SESSION_ID_ENV]
+  );
+  if (!threadId) {
+    throw new Error("Cannot identify the current Codex task. Pass --thread-id <Codex-task-id>.");
+  }
+
+  assertDelegationAllowed(workspaceRoot, threadId, "transfer");
+  const transcript = await readCodexTranscript(threadId);
+  const prompt = buildTransferPrompt(transcript);
+  ensureClaudeReady(cwd);
+
+  const job = createCompanionJob({
+    prefix: "transfer",
+    kind: "transfer",
+    title: "Claude Code Transfer",
+    workspaceRoot,
+    jobClass: "task",
+    summary: `Codex task ${threadId}`,
+    sessionId: threadId
+  });
+  await runForegroundCommand(
+    job,
+    async (progress, onSpawn) => {
+      const settingsFile = createSandboxSettings("read-only");
+      let result;
+      try {
+        result = await runClaudeTurn(workspaceRoot, prompt, {
+          model: resolveDefaultModel(resolveModel(options.model)),
+          effort: options.effort ? resolveEffort(options.effort) : undefined,
+          permissionMode: "dontAsk",
+          settingsFile,
+          tools: [],
+          strictMcpConfig: true,
+          maxTurns: 1,
+          onProgress: progress,
+          onSpawn
+        });
+      } finally {
+        cleanupSandboxSettings(settingsFile);
+      }
+
+      const completed = result.status === "completed" && Boolean(result.sessionId) && Boolean(result.finalMessage?.trim());
+      const failure = result.stderr || result.warning || "Claude Code did not return a completed handoff and resumable session ID.";
+      return {
+        exitStatus: completed ? 0 : resolveClaudeExitStatus(result) || 1,
+        threadId: result.sessionId,
+        turnId: null,
+        payload: {
+          status: completed ? "completed" : "failed",
+          sourceCodexTaskId: threadId,
+          claudeSessionId: result.sessionId,
+          rawOutput: result.finalMessage,
+          ...(completed ? {} : { error: failure })
+        },
+        rendered: completed
+          ? `Transferred Codex task ${threadId} to Claude Code session ${result.sessionId}.\nResume with: claude --resume ${result.sessionId}\n`
+          : `Claude Code transfer failed: ${failure}\n`,
+        summary: completed ? `Transferred Codex task ${threadId}` : failure,
+        jobTitle: "Claude Code Transfer",
+        jobClass: "task"
+      };
+    },
+    { json: options.json, markViewedOnSuccess: true }
+  );
+}
+
 async function handleTaskWorker(argv) {
   const { options } = parseCommandInput(argv, {
     valueOptions: ["cwd", "job-id"]
@@ -2131,6 +2217,9 @@ async function main() {
       break;
     case "task":
       await handleTask(argv);
+      break;
+    case "transfer":
+      await handleTransfer(argv);
       break;
     case "task-worker":
       await handleTaskWorker(argv);

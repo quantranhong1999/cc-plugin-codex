@@ -671,6 +671,103 @@ function assertCompletedReviewPayload(payload) {
 }
 
 describe("claude-companion integration", () => {
+  it("transfers the current Codex conversation into a tracked resumable Claude session", () => {
+    const testEnv = createTestEnvironment();
+    const threadId = "01a0d776-2e45-70e0-bab1-592a35d3a5f8";
+    const invocationFile = path.join(testEnv.rootDir, "claude-invocation.json");
+    const sessionDir = path.join(testEnv.env.CODEX_HOME, "sessions", "2026", "09", "25");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const userMessage = (text) => ({
+      type: "response_item",
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text }] }
+    });
+    const assistantMessage = (text, phase = "final_answer") => ({
+      type: "response_item",
+      payload: { type: "message", role: "assistant", phase, content: [{ type: "output_text", text }] }
+    });
+    fs.writeFileSync(
+      path.join(sessionDir, `rollout-2026-09-25T10-00-00-${threadId}.jsonl`),
+      [
+        { type: "session_meta", payload: { id: threadId } },
+        userMessage("Implement the parser"),
+        assistantMessage("The parser is implemented"),
+        userMessage("$cc:transfer"),
+        assistantMessage("Preparing transfer", "commentary")
+      ].map((event) => JSON.stringify(event)).join("\n") + "\n"
+    );
+
+    const env = {
+      ...testEnv.env,
+      CODEX_THREAD_ID: threadId,
+      CLAUDE_INVOCATION_FILE: invocationFile,
+    };
+    try {
+      const transfer = runCompanionJson(
+        ["transfer", "--cwd", testEnv.workspaceDir, "--model", "sonnet", "--json"],
+        { env }
+      );
+      assert.equal(transfer.status, "completed");
+      assert.equal(transfer.sourceCodexTaskId, threadId);
+      assert.ok(transfer.claudeSessionId);
+
+      const invocation = JSON.parse(fs.readFileSync(invocationFile, "utf8"));
+      const imported = JSON.parse(invocation.prompt.slice(invocation.prompt.indexOf('{"threadId"')));
+      assert.deepEqual(imported.messages, [
+        { role: "user", text: "Implement the parser" },
+        { role: "assistant", text: "The parser is implemented" }
+      ]);
+      assert.equal(invocation.args[invocation.args.indexOf("--tools") + 1], "");
+      assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "sonnet");
+      assert.ok(invocation.args.includes("--strict-mcp-config"));
+      assert.ok(!invocation.args.includes("--no-session-persistence"));
+
+      const [job] = listStoredJobs(testEnv);
+      assert.equal(job.kind, "transfer");
+      assert.equal(job.sessionId, threadId);
+      assert.equal(job.threadId, transfer.claudeSessionId);
+      const status = runCompanionJson(["status", "--cwd", testEnv.workspaceDir, "--json"], { env });
+      assert.equal(status.latestFinished.id, job.id);
+      const result = runCompanion(["result", "--cwd", testEnv.workspaceDir, job.id], { env });
+      assert.match(result.stdout, /claude --resume/);
+    } finally {
+      cleanupTestEnvironment(testEnv);
+    }
+  });
+
+  it("fails transfer before invoking Claude when the current transcript is missing", () => {
+    const testEnv = createTestEnvironment();
+    const invocationFile = path.join(testEnv.rootDir, "claude-invocation.json");
+    try {
+      const result = runCompanionExpectFailure(
+        ["transfer", "--cwd", testEnv.workspaceDir],
+        { env: { ...testEnv.env, CODEX_THREAD_ID: "missing-task", CLAUDE_INVOCATION_FILE: invocationFile } }
+      );
+      assert.match(result.stderr, /No local Codex transcript found/);
+      assert.equal(fs.existsSync(invocationFile), false);
+      assert.deepEqual(listStoredJobs(testEnv), []);
+    } finally {
+      cleanupTestEnvironment(testEnv);
+    }
+  });
+
+  it("does not infer a transfer source from a shared workspace marker", () => {
+    const testEnv = createTestEnvironment();
+    try {
+      writeCurrentSessionMarker(testEnv, "some-other-task");
+      const env = { ...testEnv.env };
+      delete env.CODEX_THREAD_ID;
+      delete env[SESSION_ID_ENV];
+      const result = runCompanionExpectFailure(
+        ["transfer", "--cwd", testEnv.workspaceDir],
+        { env }
+      );
+      assert.match(result.stderr, /Cannot identify the current Codex task/);
+      assert.deepEqual(listStoredJobs(testEnv), []);
+    } finally {
+      cleanupTestEnvironment(testEnv);
+    }
+  });
+
   it("setup toggles the review gate on and off for the current workspace", () => {
     const testEnv = createTestEnvironment();
     const fakeCodex = createFakeCodexAppServer(testEnv, []);
