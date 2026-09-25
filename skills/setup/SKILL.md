@@ -13,6 +13,8 @@ Supported arguments:
 - `--enable-review-gate`
 - `--disable-review-gate`
 
+Every companion setup invocation (the JSON probe, any retry, and the final report) must run as one blocking `exec_command` call with `sandbox_permissions: "require_escalated"` and the justification `Allow the Claude Code setup companion to inspect Codex app-server hooks and update plugin state outside the task sandbox.` Do not first try setup in the default sandbox: the nested Codex app-server cannot initialize its SQLite state under `~/.codex` there. If escalation is unavailable or denied, report that limitation instead of presenting hook-trust or writable-root guidance as confirmed.
+
 Workflow:
 - First run the machine-readable probe:
   `node "<plugin-root>/scripts/claude-companion.mjs" setup --json $ARGUMENTS`

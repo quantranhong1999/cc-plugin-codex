@@ -449,6 +449,14 @@ test("setup skill repairs native plugin hook feature gates before the final setu
   assert.doesNotMatch(setup, /install-hooks\.mjs/i);
 });
 
+test("setup skill runs every companion probe and report outside the task sandbox", () => {
+  const setup = read("skills/setup/SKILL.md");
+  assert.match(setup, /every .*setup.* invocation/i);
+  assert.match(setup, /`sandbox_permissions: "require_escalated"`/);
+  assert.match(setup, /Codex app-server.*plugin state/i);
+  assert.match(setup, /Do not first try .*default sandbox/i);
+});
+
 test("simple runtime skills resolve the active plugin root from the skill path", () => {
   const status = read("skills/status/SKILL.md");
   const result = read("skills/result/SKILL.md");
