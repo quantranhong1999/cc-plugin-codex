@@ -64,6 +64,24 @@ test("reads visible conversation and excludes routing, reasoning, and the transf
   assert.doesNotMatch(prompt, /private thought|Starting transfer|hidden setup/);
 });
 
+test("records the Codex task directory without sending it to Claude", async () => {
+  const threadId = "01a0d776-2e45-70e0-bab1-592a35d3a5f8";
+  const taskDir = path.resolve(os.tmpdir(), "codex-task");
+  const withCwd = createRollout(threadId, [
+    { type: "session_meta", payload: { id: threadId, cwd: taskDir } },
+    message("user", "Please fix the parser"),
+  ]);
+  const transcript = await readCodexTranscript(threadId, { codexHome: withCwd.codexHome });
+  assert.equal(transcript.cwd, taskDir);
+  assert.ok(!buildTransferPrompt(transcript).includes(taskDir));
+
+  const relative = createRollout(threadId, [
+    { type: "session_meta", payload: { id: threadId, cwd: "relative/dir" } },
+    message("user", "Please fix the parser"),
+  ]);
+  assert.equal((await readCodexTranscript(threadId, { codexHome: relative.codexHome })).cwd, null);
+});
+
 test("reads archived tasks and rejects a rollout whose metadata does not match", async () => {
   const threadId = "01a0d776-2e45-70e0-bab1-592a35d3a5f8";
   const { codexHome, filename } = createRollout(threadId, [

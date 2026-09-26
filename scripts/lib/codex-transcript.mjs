@@ -119,7 +119,9 @@ export async function readCodexTranscript(threadId, options = {}) {
   if (!messages.some((message) => message.role === "user")) {
     throw new Error(`Codex task ${safeId} has no user conversation to transfer.`);
   }
-  return { threadId: safeId, messages };
+  // Where the Codex task ran; older rollouts may not record it.
+  const cwd = typeof metadata.cwd === "string" && path.isAbsolute(metadata.cwd) ? metadata.cwd : null;
+  return { threadId: safeId, cwd, messages };
 }
 
 export function buildTransferPrompt(transcript) {
@@ -129,6 +131,6 @@ export function buildTransferPrompt(transcript) {
     "Images, audio, tools, reasoning, and hidden system context are not included.",
     "Acknowledge the handoff briefly and wait for the user's next instruction. Do not use tools or change files on this turn.",
     "",
-    JSON.stringify(transcript),
+    JSON.stringify({ threadId: transcript.threadId, messages: transcript.messages }),
   ].join("\n");
 }

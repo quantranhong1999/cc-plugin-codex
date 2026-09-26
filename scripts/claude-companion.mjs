@@ -1746,6 +1746,20 @@ async function handleTask(argv) {
   });
 }
 
+/**
+ * Claude Code lists sessions by the directory they started in, so the handoff
+ * starts where the Codex task ran rather than wherever the skill invoked us.
+ */
+function resolveTransferCwd(transcript) {
+  if (!transcript.cwd) {
+    return process.cwd();
+  }
+  if (!fs.statSync(transcript.cwd, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(`The Codex task directory ${transcript.cwd} no longer exists. Pass --cwd <path>.`);
+  }
+  return transcript.cwd;
+}
+
 async function handleTransfer(argv) {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["thread-id", "cwd", "model", "effort"],
@@ -1756,8 +1770,6 @@ async function handleTransfer(argv) {
     throw new Error("transfer accepts only flags; continue the conversation in Claude after the handoff.");
   }
 
-  const cwd = resolveCommandCwd(options);
-  const workspaceRoot = resolveCommandWorkspace(options);
   const threadId = resolveOwnerSessionId(
     options["thread-id"] ??
       process.env.CODEX_THREAD_ID ??
@@ -1767,8 +1779,10 @@ async function handleTransfer(argv) {
     throw new Error("Cannot identify the current Codex task. Pass --thread-id <Codex-task-id>.");
   }
 
-  assertDelegationAllowed(workspaceRoot, threadId, "transfer");
   const transcript = await readCodexTranscript(threadId);
+  const cwd = options.cwd ? resolveCommandCwd(options) : resolveTransferCwd(transcript);
+  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  assertDelegationAllowed(workspaceRoot, threadId, "transfer");
   const prompt = buildTransferPrompt(transcript);
   ensureClaudeReady(cwd);
 
@@ -1787,7 +1801,7 @@ async function handleTransfer(argv) {
       const settingsFile = createSandboxSettings("read-only");
       let result;
       try {
-        result = await runClaudeTurn(workspaceRoot, prompt, {
+        result = await runClaudeTurn(cwd, prompt, {
           model: resolveDefaultModel(resolveModel(options.model)),
           effort: options.effort ? resolveEffort(options.effort) : undefined,
           permissionMode: "dontAsk",
@@ -1812,11 +1826,12 @@ async function handleTransfer(argv) {
           status: completed ? "completed" : "failed",
           sourceCodexTaskId: threadId,
           claudeSessionId: result.sessionId,
+          cwd,
           rawOutput: result.finalMessage,
           ...(completed ? {} : { error: failure })
         },
         rendered: completed
-          ? `Transferred Codex task ${threadId} to Claude Code session ${result.sessionId}.\nResume with: claude --resume ${result.sessionId}\n`
+          ? `Transferred Codex task ${threadId} to Claude Code session ${result.sessionId}.\nResume from ${cwd} with: claude --resume ${result.sessionId}\n`
           : `Claude Code transfer failed: ${failure}\n`,
         summary: completed ? `Transferred Codex task ${threadId}` : failure,
         jobTitle: "Claude Code Transfer",

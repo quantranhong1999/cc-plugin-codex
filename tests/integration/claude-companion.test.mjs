@@ -115,7 +115,7 @@ async function main() {
   if (process.env.CLAUDE_INVOCATION_FILE) {
     require("node:fs").writeFileSync(
       process.env.CLAUDE_INVOCATION_FILE,
-      JSON.stringify({ args, prompt, sessionId }, null, 2) + "\\n",
+      JSON.stringify({ args, prompt, sessionId, cwd: process.cwd() }, null, 2) + "\\n",
       "utf8"
     );
   }
@@ -146,6 +146,20 @@ main().catch((error) => {
 
   fs.writeFileSync(claudePath, stubSource, "utf8");
   fs.chmodSync(claudePath, 0o755);
+}
+
+function writeTransferRollout(testEnv, threadId, cwd) {
+  const sessionDir = path.join(testEnv.env.CODEX_HOME, "sessions", "2026", "09", "25");
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const content = (role, text) => [{ type: role === "user" ? "input_text" : "output_text", text }];
+  fs.writeFileSync(
+    path.join(sessionDir, `rollout-2026-09-25T10-00-00-${threadId}.jsonl`),
+    [
+      { type: "session_meta", payload: { id: threadId, cwd } },
+      { type: "response_item", payload: { type: "message", role: "user", content: content("user", "Implement the parser") } },
+      { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: content("assistant", "Done") } }
+    ].map((event) => JSON.stringify(event)).join("\n") + "\n"
+  );
 }
 
 function createTestEnvironment() {
@@ -729,6 +743,45 @@ describe("claude-companion integration", () => {
       assert.equal(status.latestFinished.id, job.id);
       const result = runCompanion(["result", "--cwd", testEnv.workspaceDir, job.id], { env });
       assert.match(result.stdout, /claude --resume/);
+    } finally {
+      cleanupTestEnvironment(testEnv);
+    }
+  });
+
+  it("starts the transferred Claude session in the Codex task directory", () => {
+    const testEnv = createTestEnvironment();
+    const threadId = "01a0d776-2e45-70e0-bab1-592a35d3a5f8";
+    const taskDir = path.join(testEnv.workspaceDir, "task");
+    fs.mkdirSync(taskDir);
+    const invocationFile = path.join(testEnv.rootDir, "claude-invocation.json");
+    writeTransferRollout(testEnv, threadId, taskDir);
+    try {
+      // The companion itself runs from the plugin checkout, as the skill invokes it.
+      const transfer = runCompanionJson(
+        ["transfer", "--json"],
+        { env: { ...testEnv.env, CODEX_THREAD_ID: threadId, CLAUDE_INVOCATION_FILE: invocationFile } }
+      );
+      assert.equal(transfer.status, "completed");
+      assert.equal(transfer.cwd, taskDir);
+      const invocation = JSON.parse(fs.readFileSync(invocationFile, "utf8"));
+      assert.equal(fs.realpathSync(invocation.cwd), fs.realpathSync(taskDir));
+    } finally {
+      cleanupTestEnvironment(testEnv);
+    }
+  });
+
+  it("fails transfer before invoking Claude when the Codex task directory is gone", () => {
+    const testEnv = createTestEnvironment();
+    const threadId = "01a0d776-2e45-70e0-bab1-592a35d3a5f8";
+    const invocationFile = path.join(testEnv.rootDir, "claude-invocation.json");
+    writeTransferRollout(testEnv, threadId, path.join(testEnv.workspaceDir, "deleted"));
+    try {
+      const result = runCompanionExpectFailure(
+        ["transfer"],
+        { env: { ...testEnv.env, CODEX_THREAD_ID: threadId, CLAUDE_INVOCATION_FILE: invocationFile } }
+      );
+      assert.match(result.stderr, /no longer exists\. Pass --cwd/);
+      assert.equal(fs.existsSync(invocationFile), false);
     } finally {
       cleanupTestEnvironment(testEnv);
     }
